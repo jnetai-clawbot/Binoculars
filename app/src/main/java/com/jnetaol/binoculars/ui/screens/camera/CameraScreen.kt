@@ -49,8 +49,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
-import java.text.SimpleDateFormat
-import java.util.Locale
 
 private fun convertToDMS(value: Double): String {
     val abs = Math.abs(value)
@@ -104,22 +102,17 @@ fun CameraScreen(
     val showDistance by SettingsManager.showDistanceOverlay(context).collectAsState(initial = true)
     val nightVision by SettingsManager.nightVisionMode(context).collectAsState(initial = false)
     val showGrid by SettingsManager.showGrid(context).collectAsState(initial = true)
-    val useScreenshotCapture by SettingsManager.useScreenshotCapture(context).collectAsState(initial = true)
     val saveLocationMetadata by SettingsManager.saveLocationMetadata(context).collectAsState(initial = false)
 
     var zoomRatio by remember { mutableFloatStateOf(1f) }
     var maxZoomRatio by remember { mutableFloatStateOf(8f) }
     var isCapturing by remember { mutableStateOf(false) }
     var captureError by remember { mutableStateOf<String?>(null) }
-    var overlayVisible by remember { mutableStateOf(true) }
 
     var previewRef by remember { mutableStateOf<PreviewView?>(null) }
-    var locationClient: FusedLocationProviderClient? = null
 
     DisposableEffect(Unit) {
-        cameraManager.onZoomChanged = { zoom ->
-            zoomRatio = zoom
-        }
+        cameraManager.onZoomChanged = { zoom -> zoomRatio = zoom }
         onCameraReady?.invoke(cameraManager)
         onDispose {
             onCameraReady?.invoke(null!!)
@@ -146,39 +139,12 @@ fun CameraScreen(
             LocationServices.getFusedLocationProviderClient(context)
         } catch (_: Exception) { null }
 
-        if (useScreenshotCapture) {
-            captureScreenshot(context, previewRef, zoomRatio, saveLocationMetadata, fClient) { file ->
-                isCapturing = false
-                overlayVisible = true
-                if (file != null) {
-                    onPhotoCaptured(file, zoomRatio)
-                } else {
-                    captureError = "Screenshot capture failed. Please try again."
-                }
-            }
-        } else {
-            cameraManager.capturePhoto { file ->
-                if (file != null) {
-                    if (saveLocationMetadata) {
-                        embedLocation(context, file, fClient) { updatedFile ->
-                            isCapturing = false
-                            onPhotoCaptured(updatedFile, zoomRatio)
-                        }
-                    } else {
-                        isCapturing = false
-                        onPhotoCaptured(file, zoomRatio)
-                    }
-                } else {
-                    isCapturing = false
-                    captureScreenshot(context, previewRef, zoomRatio, saveLocationMetadata, fClient) { fallbackFile ->
-                        overlayVisible = true
-                        if (fallbackFile != null) {
-                            onPhotoCaptured(fallbackFile, zoomRatio)
-                        } else {
-                            captureError = "Photo capture failed. Please try again."
-                        }
-                    }
-                }
+        captureScreenshot(context, previewRef, zoomRatio, saveLocationMetadata, fClient) { file ->
+            isCapturing = false
+            if (file != null) {
+                onPhotoCaptured(file, zoomRatio)
+            } else {
+                captureError = "Capture failed. Please try again."
             }
         }
     }
@@ -186,40 +152,36 @@ fun CameraScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(if (overlayVisible) DarkBackground else Color.Black)
+            .background(Color.Black)
     ) {
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).apply {
-                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    implementationMode = PreviewView.ImplementationMode.PERFORMANCE
                     previewRef = this
-                    post {
-                        cameraManager.startCamera(this)
-                    }
+                    post { cameraManager.startCamera(this) }
                 }
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        if (overlayVisible) {
-            if (nightVision) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0x6600FF00))
-                )
-            }
-
-            if (showDistance) {
-                DistanceOverlay(zoomRatio = zoomRatio)
-            }
-
-            if (showGrid) {
-                ReticleOverlay(modifier = Modifier.fillMaxSize())
-            }
+        if (nightVision) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0x6600FF00))
+            )
         }
 
-        if (overlayVisible) {
+        if (showDistance && !isCapturing) {
+            DistanceOverlay(zoomRatio = zoomRatio)
+        }
+
+        if (showGrid && !isCapturing) {
+            ReticleOverlay(modifier = Modifier.fillMaxSize())
+        }
+
+        if (!isCapturing) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -238,22 +200,19 @@ fun CameraScreen(
                             modifier = Modifier.size(28.dp)
                         )
                     }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.4f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (useScreenshotCapture) Icons.Default.Screenshot else Icons.Default.Camera,
-                                contentDescription = "Capture mode",
-                                tint = if (useScreenshotCapture) AccentYellow else TextSecondary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.4f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Screenshot,
+                            contentDescription = "Capture mode",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
 
@@ -284,8 +243,8 @@ fun CameraScreen(
                         isCapturing = isCapturing,
                         onClick = {
                             scope.launch {
-                                overlayVisible = false
-                                delay(100)
+                                isCapturing = true
+                                delay(150)
                                 doCapture()
                             }
                         }
@@ -301,6 +260,17 @@ fun CameraScreen(
                         fontSize = 16.sp
                     )
                 }
+            }
+        }
+
+        if (isCapturing) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = NeonGreen, strokeWidth = 3.dp)
             }
         }
     }
@@ -319,7 +289,7 @@ private fun captureScreenshot(
         return
     }
 
-    Looper.myLooper() ?: run {
+    if (Looper.myLooper() != Looper.getMainLooper()) {
         android.os.Handler(Looper.getMainLooper()).post {
             captureScreenshot(context, previewView, zoomRatio, saveLocation, locationClient, onResult)
         }
@@ -343,9 +313,7 @@ private fun captureScreenshot(
         DebugLogger.i("CameraScreen", "Screenshot saved to ${photoFile.absolutePath}")
 
         if (saveLocation && locationClient != null) {
-            embedLocation(context, photoFile, locationClient) { updatedFile ->
-                onResult(updatedFile)
-            }
+            embedLocation(context, photoFile, locationClient) { onResult(it) }
         } else {
             onResult(photoFile)
         }
@@ -381,7 +349,7 @@ private fun embedLocation(
                             exif.setAttribute(ExifInterface.TAG_GPS_ALTITUDE_REF, if (location.altitude >= 0) "0" else "1")
                         }
                         exif.saveAttributes()
-                        DebugLogger.i("CameraScreen", "Location metadata embedded: ${location.latitude}, ${location.longitude}")
+                        DebugLogger.i("CameraScreen", "Location embedded: ${lat}, $lon")
                     } catch (e: Exception) {
                         DebugLogger.e("CameraScreen", "Failed to write EXIF", "CAM006", e)
                     }

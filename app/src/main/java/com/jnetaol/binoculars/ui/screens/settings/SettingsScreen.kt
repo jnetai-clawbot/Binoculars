@@ -30,7 +30,6 @@ fun SettingsScreen(
     val showDistance by SettingsManager.showDistanceOverlay(context).collectAsState(initial = true)
     val nightVision by SettingsManager.nightVisionMode(context).collectAsState(initial = false)
     val showGrid by SettingsManager.showGrid(context).collectAsState(initial = true)
-    val useScreenshotCapture by SettingsManager.useScreenshotCapture(context).collectAsState(initial = true)
     val saveLocationMetadata by SettingsManager.saveLocationMetadata(context).collectAsState(initial = false)
 
     Column(
@@ -98,22 +97,9 @@ fun SettingsScreen(
                 )
             }
 
-            SectionHeader(title = "Capture", accentColor = AccentYellow)
+            SectionHeader(title = "Capture", accentColor = AccentBlue)
 
-            NeonCard(borderColor = AccentYellow.copy(alpha = 0.2f)) {
-                SettingToggle(
-                    icon = Icons.Default.Screenshot,
-                    title = "Screenshot Capture Mode",
-                    subtitle = "Use screen capture instead of camera API (more reliable, default ON)",
-                    checked = useScreenshotCapture,
-                    onCheckedChange = {
-                        scope.launch { SettingsManager.setUseScreenshotCapture(context, it) }
-                    },
-                    accentColor = AccentYellow
-                )
-
-                Divider(color = TextTertiary.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 8.dp))
-
+            NeonCard(borderColor = AccentBlue.copy(alpha = 0.2f)) {
                 SettingToggle(
                     icon = Icons.Default.LocationOn,
                     title = "Save Location Metadata",
