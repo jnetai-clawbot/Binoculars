@@ -52,10 +52,10 @@ import java.io.FileOutputStream
 
 private fun convertToDMS(value: Double): String {
     val abs = Math.abs(value)
-    val degrees = abs.toInt()
-    val minutes = ((abs - degrees) * 60).toInt()
-    val seconds = ((abs - degrees - minutes / 60.0) * 3600 * 100).toInt()
-    return "$degrees/1,$minutes/1,$seconds/100"
+    val d = abs.toInt()
+    val m = ((abs - d) * 60).toInt()
+    val s = ((abs - d - m / 60.0) * 3600 * 100).toInt()
+    return "$d/1,$m/1,$s/100"
 }
 
 @Composable
@@ -68,30 +68,16 @@ fun CameraScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
 
-    val hasCameraPermission = ContextCompat.checkSelfPermission(
-        context, Manifest.permission.CAMERA
-    ) == PackageManager.PERMISSION_GRANTED
+    val hasCamPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (!granted) {
-            Toast.makeText(context, "Camera permission is required", Toast.LENGTH_SHORT).show()
-            onClose()
-        }
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) { Toast.makeText(context, "Camera permission required", Toast.LENGTH_SHORT).show(); onClose() }
     }
 
-    LaunchedEffect(Unit) {
-        if (!hasCameraPermission) {
-            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-        }
-    }
+    LaunchedEffect(Unit) { if (!hasCamPerm) permLauncher.launch(Manifest.permission.CAMERA) }
 
-    if (!hasCameraPermission) {
-        Box(
-            modifier = Modifier.fillMaxSize().background(DarkBackground),
-            contentAlignment = Alignment.Center
-        ) {
+    if (!hasCamPerm) {
+        Box(Modifier.fillMaxSize().background(DarkBackground), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = NeonGreen)
         }
         return
@@ -102,17 +88,18 @@ fun CameraScreen(
     val showDistance by SettingsManager.showDistanceOverlay(context).collectAsState(initial = true)
     val nightVision by SettingsManager.nightVisionMode(context).collectAsState(initial = false)
     val showGrid by SettingsManager.showGrid(context).collectAsState(initial = true)
-    val saveLocationMetadata by SettingsManager.saveLocationMetadata(context).collectAsState(initial = false)
+    val useScreenshotCapture by SettingsManager.useScreenshotCapture(context).collectAsState(initial = true)
+    val saveLocation by SettingsManager.saveLocationMetadata(context).collectAsState(initial = false)
+    val flashlightOn by SettingsManager.flashlightEnabled(context).collectAsState(initial = false)
 
     var zoomRatio by remember { mutableFloatStateOf(1f) }
     var maxZoomRatio by remember { mutableFloatStateOf(8f) }
     var isCapturing by remember { mutableStateOf(false) }
     var captureError by remember { mutableStateOf<String?>(null) }
-
     var previewRef by remember { mutableStateOf<PreviewView?>(null) }
 
     DisposableEffect(Unit) {
-        cameraManager.onZoomChanged = { zoom -> zoomRatio = zoom }
+        cameraManager.onZoomChanged = { zoomRatio = it }
         onCameraReady?.invoke(cameraManager)
         onDispose {
             onCameraReady?.invoke(null!!)
@@ -120,40 +107,51 @@ fun CameraScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        maxZoomRatio = cameraManager.getMaxZoomRatio()
+    LaunchedEffect(Unit) { maxZoomRatio = cameraManager.getMaxZoomRatio() }
+
+    LaunchedEffect(flashlightOn) {
+        cameraManager.setFlashlight(flashlightOn)
     }
 
     LaunchedEffect(captureError) {
-        captureError?.let {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-            captureError = null
-        }
+        captureError?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show(); captureError = null }
     }
 
     fun doCapture() {
         if (isCapturing) return
         isCapturing = true
 
-        val fClient = try {
-            LocationServices.getFusedLocationProviderClient(context)
-        } catch (_: Exception) { null }
+        val fClient = try { LocationServices.getFusedLocationProviderClient(context) } catch (_: Exception) { null }
 
-        captureScreenshot(context, previewRef, zoomRatio, saveLocationMetadata, fClient) { file ->
-            isCapturing = false
-            if (file != null) {
-                onPhotoCaptured(file, zoomRatio)
-            } else {
-                captureError = "Capture failed. Please try again."
+        if (useScreenshotCapture) {
+            captureScreenshot(context, previewRef, zoomRatio, saveLocation, fClient) { file ->
+                isCapturing = false
+                if (file != null) onPhotoCaptured(file, zoomRatio)
+                else captureError = "Capture failed. Please try again."
+            }
+        } else {
+            cameraManager.capturePhoto { file ->
+                if (file != null) {
+                    if (saveLocation) embedLocation(context, file, fClient) {
+                        isCapturing = false
+                        onPhotoCaptured(it, zoomRatio)
+                    }
+                    else {
+                        isCapturing = false
+                        onPhotoCaptured(file, zoomRatio)
+                    }
+                } else {
+                    captureScreenshot(context, previewRef, zoomRatio, saveLocation, fClient) { fallback ->
+                        isCapturing = false
+                        if (fallback != null) onPhotoCaptured(fallback, zoomRatio)
+                        else captureError = "Capture failed. Please try again."
+                    }
+                }
             }
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).apply {
@@ -166,248 +164,124 @@ fun CameraScreen(
         )
 
         if (nightVision) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0x6600FF00))
-            )
+            Box(Modifier.fillMaxSize().background(Color(0x6600FF00)))
         }
 
-        if (showDistance && !isCapturing) {
-            DistanceOverlay(zoomRatio = zoomRatio)
-        }
+        if (showDistance) DistanceOverlay(zoomRatio = zoomRatio)
+        if (showGrid) ReticleOverlay(Modifier.fillMaxSize())
 
-        if (showGrid && !isCapturing) {
-            ReticleOverlay(modifier = Modifier.fillMaxSize())
-        }
-
-        if (!isCapturing) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = onClose) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Close",
-                            tint = Color.White,
-                            modifier = Modifier.size(28.dp)
-                        )
+        Column(Modifier.fillMaxSize().padding(16.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close", tint = Color.White, modifier = Modifier.size(28.dp))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IconButton(onClick = {
+                        scope.launch {
+                            val newVal = !flashlightOn
+                            SettingsManager.setFlashlightEnabled(context, newVal)
+                        }
+                    }) {
+                        Box(Modifier.size(36.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.4f)), contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (flashlightOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff,
+                                contentDescription = "Flashlight",
+                                tint = if (flashlightOn) AccentYellow else TextSecondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.4f)),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Box(Modifier.size(36.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.4f)), contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Default.Screenshot,
+                            imageVector = if (useScreenshotCapture) Icons.Default.Screenshot else Icons.Default.Camera,
                             contentDescription = "Capture mode",
-                            tint = TextSecondary,
+                            tint = if (useScreenshotCapture) AccentYellow else TextSecondary,
                             modifier = Modifier.size(18.dp)
                         )
                     }
                 }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "Volume keys to zoom",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextTertiary.copy(alpha = 0.6f),
-                        fontSize = 11.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    ZoomSlider(
-                        currentZoom = zoomRatio,
-                        maxZoom = maxZoomRatio,
-                        onZoomChange = { cameraManager.setZoomRatio(it) }
-                    )
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    ShutterButton(
-                        isCapturing = isCapturing,
-                        onClick = {
-                            scope.launch {
-                                isCapturing = true
-                                delay(150)
-                                doCapture()
-                            }
-                        }
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "%.1fx".format(zoomRatio),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = NeonGreen,
-                        fontSize = 16.sp
-                    )
-                }
             }
-        }
 
-        if (isCapturing) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(color = NeonGreen, strokeWidth = 3.dp)
+            Spacer(Modifier.weight(1f))
+
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Volume keys to zoom", style = MaterialTheme.typography.labelSmall, color = TextTertiary.copy(alpha = 0.6f), fontSize = 11.sp)
+                Spacer(Modifier.height(8.dp))
+
+                ZoomSlider(currentZoom = zoomRatio, maxZoom = maxZoomRatio, onZoomChange = { cameraManager.setZoomRatio(it) })
+
+                Spacer(Modifier.height(20.dp))
+
+                ShutterButton(isCapturing = isCapturing, onClick = {
+                    scope.launch { delay(50); doCapture() }
+                })
+
+                Spacer(Modifier.height(12.dp))
+
+                Text("%.1fx".format(zoomRatio), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = NeonGreen, fontSize = 16.sp)
             }
         }
     }
 }
 
-private fun captureScreenshot(
-    context: Context,
-    previewView: PreviewView?,
-    zoomRatio: Float,
-    saveLocation: Boolean,
-    locationClient: FusedLocationProviderClient?,
-    onResult: (File?) -> Unit
-) {
-    val view = previewView ?: run {
-        onResult(null)
-        return
-    }
-
+private fun captureScreenshot(context: Context, view: PreviewView?, zoomRatio: Float, saveLocation: Boolean, locClient: FusedLocationProviderClient?, onResult: (File?) -> Unit) {
+    val v = view ?: run { onResult(null); return }
     if (Looper.myLooper() != Looper.getMainLooper()) {
-        android.os.Handler(Looper.getMainLooper()).post {
-            captureScreenshot(context, previewView, zoomRatio, saveLocation, locationClient, onResult)
-        }
+        android.os.Handler(Looper.getMainLooper()).post { captureScreenshot(context, view, zoomRatio, saveLocation, locClient, onResult) }
         return
     }
-
     try {
-        val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        view.draw(canvas)
-
-        val outputDir = File(context.cacheDir, "photos")
-        if (!outputDir.exists()) outputDir.mkdirs()
-        val photoFile = File(outputDir, "BINOC_${System.currentTimeMillis()}.jpg")
-
-        FileOutputStream(photoFile).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-        }
+        val bitmap = Bitmap.createBitmap(v.width, v.height, Bitmap.Config.ARGB_8888)
+        v.draw(Canvas(bitmap))
+        val dir = File(context.cacheDir, "photos")
+        if (!dir.exists()) dir.mkdirs()
+        val file = File(dir, "BINOC_${System.currentTimeMillis()}.jpg")
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
         bitmap.recycle()
-
-        DebugLogger.i("CameraScreen", "Screenshot saved to ${photoFile.absolutePath}")
-
-        if (saveLocation && locationClient != null) {
-            embedLocation(context, photoFile, locationClient) { onResult(it) }
-        } else {
-            onResult(photoFile)
-        }
+        DebugLogger.i("CameraScreen", "Screenshot: ${file.name}")
+        if (saveLocation && locClient != null) embedLocation(context, file, locClient) { onResult(it) }
+        else onResult(file)
     } catch (e: Exception) {
         DebugLogger.e("CameraScreen", "Screenshot failed: ${e.message}", "CAM005", e)
         onResult(null)
     }
 }
 
-private fun embedLocation(
-    context: Context,
-    photoFile: File,
-    locationClient: FusedLocationProviderClient?,
-    onResult: (File) -> Unit
-) {
-    val client = locationClient ?: run { onResult(photoFile); return }
-
+private fun embedLocation(context: Context, photoFile: File, locClient: FusedLocationProviderClient?, onResult: (File) -> Unit) {
+    val client = locClient ?: run { onResult(photoFile); return }
     try {
         client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
-            .addOnSuccessListener { location: Location? ->
-                if (location != null) {
-                    try {
-                        val exif = ExifInterface(photoFile.absolutePath)
-                        val lat = location.latitude
-                        val lon = location.longitude
-                        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, convertToDMS(lat))
-                        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, if (lat >= 0) "N" else "S")
-                        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, convertToDMS(lon))
-                        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, if (lon >= 0) "E" else "W")
-                        if (location.hasAltitude()) {
-                            exif.setAttribute(ExifInterface.TAG_GPS_ALTITUDE,
-                                (location.altitude * 100).toLong().toString())
-                            exif.setAttribute(ExifInterface.TAG_GPS_ALTITUDE_REF, if (location.altitude >= 0) "0" else "1")
-                        }
-                        exif.saveAttributes()
-                        DebugLogger.i("CameraScreen", "Location embedded: ${lat}, $lon")
-                    } catch (e: Exception) {
-                        DebugLogger.e("CameraScreen", "Failed to write EXIF", "CAM006", e)
+            .addOnSuccessListener { loc: Location? ->
+                if (loc != null) try {
+                    val exif = ExifInterface(photoFile.absolutePath)
+                    val lat = loc.latitude; val lon = loc.longitude
+                    exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, convertToDMS(lat))
+                    exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, if (lat >= 0) "N" else "S")
+                    exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, convertToDMS(lon))
+                    exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, if (lon >= 0) "E" else "W")
+                    if (loc.hasAltitude()) {
+                        exif.setAttribute(ExifInterface.TAG_GPS_ALTITUDE, (loc.altitude * 100).toLong().toString())
+                        exif.setAttribute(ExifInterface.TAG_GPS_ALTITUDE_REF, if (loc.altitude >= 0) "0" else "1")
                     }
-                }
+                    exif.saveAttributes()
+                } catch (_: Exception) {}
                 onResult(photoFile)
             }
-            .addOnFailureListener {
-                DebugLogger.w("CameraScreen", "Location fetch failed: ${it.message}")
-                onResult(photoFile)
-            }
-    } catch (e: Exception) {
-        DebugLogger.w("CameraScreen", "Location unavailable: ${e.message}")
-        onResult(photoFile)
-    }
+            .addOnFailureListener { onResult(photoFile) }
+    } catch (_: Exception) { onResult(photoFile) }
 }
 
 @Composable
 private fun DistanceOverlay(zoomRatio: Float) {
-    val distanceResult = remember(zoomRatio) {
-        DistanceEstimator.estimateDistance(zoomRatio)
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 16.dp),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        Surface(
-            color = Color.Black.copy(alpha = 0.55f),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "DISTANCE ESTIMATOR",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = NeonGreen.copy(alpha = 0.7f),
-                    fontSize = 10.sp,
-                    letterSpacing = 2.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = distanceResult.label,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = NeonGreen,
-                    fontSize = 18.sp
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "Target: ~${"%.1f".format(distanceResult.estimatedDistanceMeters)}m | Confidence: ${"%.0f".format(distanceResult.confidencePercent)}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondary,
-                    fontSize = 11.sp
-                )
+    val result = remember(zoomRatio) { DistanceEstimator.estimateDistance(zoomRatio) }
+    Box(Modifier.fillMaxSize().padding(top = 16.dp), contentAlignment = Alignment.TopCenter) {
+        Surface(color = Color.Black.copy(alpha = 0.55f), shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("DISTANCE ESTIMATOR", style = MaterialTheme.typography.labelSmall, color = NeonGreen.copy(alpha = 0.7f), fontSize = 10.sp, letterSpacing = 2.sp)
+                Spacer(Modifier.height(4.dp))
+                Text(result.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = NeonGreen, fontSize = 18.sp)
+                Spacer(Modifier.height(2.dp))
+                Text("Target: ~${"%.1f".format(result.estimatedDistanceMeters)}m | Confidence: ${"%.0f".format(result.confidencePercent)}%", style = MaterialTheme.typography.labelSmall, color = TextSecondary, fontSize = 11.sp)
             }
         }
     }
@@ -416,121 +290,33 @@ private fun DistanceOverlay(zoomRatio: Float) {
 @Composable
 private fun ReticleOverlay(modifier: Modifier = Modifier) {
     Box(modifier = modifier) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .fillMaxHeight(0.7f)
-                .align(Alignment.Center)
-                .border(1.dp, ReticleColor.copy(alpha = 0.3f))
-        )
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .align(Alignment.Center)
-                .background(ReticleColor.copy(alpha = 0.15f))
-        )
-
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(1.dp)
-                .align(Alignment.Center)
-                .background(ReticleColor.copy(alpha = 0.15f))
-        )
-
-        Box(
-            modifier = Modifier
-                .size(6.dp)
-                .align(Alignment.Center)
-                .clip(CircleShape)
-                .background(ReticleColor.copy(alpha = 0.5f))
-        )
+        Box(Modifier.fillMaxWidth(0.9f).fillMaxHeight(0.7f).align(Alignment.Center).border(1.dp, ReticleColor.copy(alpha = 0.3f)))
+        Box(Modifier.fillMaxWidth().height(1.dp).align(Alignment.Center).background(ReticleColor.copy(alpha = 0.15f)))
+        Box(Modifier.fillMaxHeight().width(1.dp).align(Alignment.Center).background(ReticleColor.copy(alpha = 0.15f)))
+        Box(Modifier.size(6.dp).align(Alignment.Center).clip(CircleShape).background(ReticleColor.copy(alpha = 0.5f)))
     }
 }
 
 @Composable
-private fun ZoomSlider(
-    currentZoom: Float,
-    maxZoom: Float,
-    onZoomChange: (Float) -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(0.85f),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Search,
-                contentDescription = null,
-                tint = TextSecondary,
-                modifier = Modifier.size(16.dp)
-            )
-
-            Slider(
-                value = currentZoom,
-                onValueChange = onZoomChange,
-                valueRange = 1f..maxZoom,
-                modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = NeonGreen,
-                    activeTrackColor = NeonGreen,
-                    inactiveTrackColor = NeonGreen.copy(alpha = 0.2f)
-                )
-            )
-
-            Icon(
-                imageVector = Icons.Default.ZoomIn,
-                contentDescription = null,
-                tint = NeonGreen,
-                modifier = Modifier.size(20.dp)
-            )
-
-            Text(
-                text = "%.0fx".format(maxZoom),
-                style = MaterialTheme.typography.labelSmall,
-                color = TextTertiary
-            )
+private fun ZoomSlider(currentZoom: Float, maxZoom: Float, onZoomChange: (Float) -> Unit) {
+    Column(Modifier.fillMaxWidth(0.85f), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Default.Search, null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+            Slider(value = currentZoom, onValueChange = onZoomChange, valueRange = 1f..maxZoom, modifier = Modifier.weight(1f),
+                colors = SliderDefaults.colors(thumbColor = NeonGreen, activeTrackColor = NeonGreen, inactiveTrackColor = NeonGreen.copy(alpha = 0.2f)))
+            Icon(Icons.Default.ZoomIn, null, tint = NeonGreen, modifier = Modifier.size(20.dp))
+            Text("%.0fx".format(maxZoom), style = MaterialTheme.typography.labelSmall, color = TextTertiary)
         }
     }
 }
 
 @Composable
-private fun ShutterButton(
-    isCapturing: Boolean,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .size(72.dp)
-            .clip(CircleShape)
-            .border(4.dp, ShutterColor, CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .size(58.dp)
-                .clip(CircleShape)
-                .background(if (isCapturing) NeonGreen.copy(alpha = 0.6f) else ShutterColor)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = rememberRipple(bounded = true, radius = 29.dp),
-                    onClick = onClick
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            if (isCapturing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
-                    color = Color.White,
-                    strokeWidth = 2.dp
-                )
-            }
+private fun ShutterButton(isCapturing: Boolean, onClick: () -> Unit) {
+    Box(Modifier.size(72.dp).clip(CircleShape).border(4.dp, ShutterColor, CircleShape), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(58.dp).clip(CircleShape).background(if (isCapturing) NeonGreen.copy(alpha = 0.6f) else ShutterColor)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = rememberRipple(bounded = true, radius = 29.dp), onClick = onClick),
+            contentAlignment = Alignment.Center) {
+            if (isCapturing) CircularProgressIndicator(Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
         }
     }
 }

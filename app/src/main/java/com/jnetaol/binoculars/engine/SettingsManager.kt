@@ -19,6 +19,7 @@ object SettingsManager {
     private val KEY_DISTANCE_MULTIPLIER = floatPreferencesKey("distance_multiplier")
     private val KEY_USE_SCREENSHOT_CAPTURE = booleanPreferencesKey("use_screenshot_capture")
     private val KEY_SAVE_LOCATION_METADATA = booleanPreferencesKey("save_location_metadata")
+    private val KEY_FLASHLIGHT = booleanPreferencesKey("flashlight_enabled")
 
     fun showDistanceOverlay(context: Context): Flow<Boolean> =
         context.dataStore.data.map { it[KEY_SHOW_DISTANCE] ?: true }
@@ -37,6 +38,9 @@ object SettingsManager {
 
     fun saveLocationMetadata(context: Context): Flow<Boolean> =
         context.dataStore.data.map { it[KEY_SAVE_LOCATION_METADATA] ?: false }
+
+    fun flashlightEnabled(context: Context): Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_FLASHLIGHT] ?: false }
 
     suspend fun setShowDistanceOverlay(context: Context, value: Boolean) {
         context.dataStore.edit { it[KEY_SHOW_DISTANCE] = value }
@@ -60,5 +64,9 @@ object SettingsManager {
 
     suspend fun setSaveLocationMetadata(context: Context, value: Boolean) {
         context.dataStore.edit { it[KEY_SAVE_LOCATION_METADATA] = value }
+    }
+
+    suspend fun setFlashlightEnabled(context: Context, value: Boolean) {
+        context.dataStore.edit { it[KEY_FLASHLIGHT] = value }
     }
 }
