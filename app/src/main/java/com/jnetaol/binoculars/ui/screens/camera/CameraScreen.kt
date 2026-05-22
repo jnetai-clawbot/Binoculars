@@ -22,16 +22,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.jnetaol.binoculars.engine.CameraManager
+import com.jnetaol.binoculars.engine.DistanceEstimator
+import com.jnetaol.binoculars.engine.SettingsManager
 import com.jnetaol.binoculars.logger.DebugLogger
 import com.jnetaol.binoculars.ui.theme.*
 import java.io.File
@@ -39,7 +41,8 @@ import java.io.File
 @Composable
 fun CameraScreen(
     onClose: () -> Unit,
-    onPhotoCaptured: (File, Float) -> Unit
+    onPhotoCaptured: (File, Float) -> Unit,
+    onCameraReady: ((com.jnetaol.binoculars.engine.CameraManager?) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -75,24 +78,41 @@ fun CameraScreen(
 
     val cameraManager = remember { CameraManager(context, lifecycleOwner) }
 
-    var zoomRatio by remember { mutableStateOf(1f) }
-    var maxZoomRatio by remember { mutableStateOf(8f) }
+    val showDistance by SettingsManager.showDistanceOverlay(context).collectAsState(initial = true)
+    val nightVision by SettingsManager.nightVisionMode(context).collectAsState(initial = false)
+    val showGrid by SettingsManager.showGrid(context).collectAsState(initial = true)
+
+    var zoomRatio by remember { mutableFloatStateOf(1f) }
+    var maxZoomRatio by remember { mutableFloatStateOf(8f) }
     var isCapturing by remember { mutableStateOf(false) }
-    var showGrid by remember { mutableStateOf(true) }
+    var captureError by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(Unit) {
         cameraManager.onZoomChanged = { zoom ->
             zoomRatio = zoom
         }
-        onDispose { cameraManager.release() }
+        onCameraReady?.invoke(cameraManager)
+        onDispose {
+            onCameraReady?.invoke(null!!)
+            cameraManager.release()
+        }
     }
 
     LaunchedEffect(Unit) {
         maxZoomRatio = cameraManager.getMaxZoomRatio()
     }
 
+    LaunchedEffect(captureError) {
+        captureError?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            captureError = null
+        }
+    }
+
     Box(
-        modifier = Modifier.fillMaxSize().background(DarkBackground)
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBackground)
     ) {
         AndroidView(
             factory = { ctx ->
@@ -105,6 +125,18 @@ fun CameraScreen(
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        if (nightVision) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0x6600FF00))
+            )
+        }
+
+        if (showDistance) {
+            DistanceOverlay(zoomRatio = zoomRatio)
+        }
 
         if (showGrid) {
             ReticleOverlay(modifier = Modifier.fillMaxSize())
@@ -130,16 +162,22 @@ fun CameraScreen(
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    IconButton(onClick = { showGrid = !showGrid }) {
-                        Icon(
-                            imageVector = if (showGrid) Icons.Default.GridOn else Icons.Default.GridOff,
-                            contentDescription = "Toggle grid",
-                            tint = if (showGrid) NeonGreen else TextSecondary,
-                            modifier = Modifier.size(22.dp)
-                        )
+                    IconButton(onClick = { /* flash not supported */ }) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.4f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FlashOff,
+                                contentDescription = "Flash off",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
-
-                    FlashIndicator()
                 }
             }
 
@@ -149,6 +187,15 @@ fun CameraScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                Text(
+                    text = "Volume keys to zoom",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextTertiary.copy(alpha = 0.6f),
+                    fontSize = 11.sp
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
                 ZoomSlider(
                     currentZoom = zoomRatio,
                     maxZoom = maxZoomRatio,
@@ -167,6 +214,7 @@ fun CameraScreen(
                                 if (file != null) {
                                     onPhotoCaptured(file, zoomRatio)
                                 } else {
+                                    captureError = "Photo capture failed. Please try again."
                                     DebugLogger.e(
                                         "CameraScreen",
                                         "Photo capture failed",
@@ -186,6 +234,53 @@ fun CameraScreen(
                     fontWeight = FontWeight.Bold,
                     color = NeonGreen,
                     fontSize = 16.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DistanceOverlay(zoomRatio: Float) {
+    val distanceResult = remember(zoomRatio) {
+        DistanceEstimator.estimateDistance(zoomRatio)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = 16.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Surface(
+            color = Color.Black.copy(alpha = 0.55f),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "DISTANCE ESTIMATOR",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NeonGreen.copy(alpha = 0.7f),
+                    fontSize = 10.sp,
+                    letterSpacing = 2.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = distanceResult.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = NeonGreen,
+                    fontSize = 18.sp
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Target: ~${"%.1f".format(distanceResult.estimatedDistanceMeters)}m | Confidence: ${"%.0f".format(distanceResult.confidencePercent)}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondary,
+                    fontSize = 11.sp
                 )
             }
         }
@@ -225,24 +320,6 @@ private fun ReticleOverlay(modifier: Modifier = Modifier) {
                 .align(Alignment.Center)
                 .clip(CircleShape)
                 .background(ReticleColor.copy(alpha = 0.5f))
-        )
-    }
-}
-
-@Composable
-private fun FlashIndicator() {
-    Box(
-        modifier = Modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.4f)),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = Icons.Default.FlashOff,
-            contentDescription = "Flash off",
-            tint = TextSecondary,
-            modifier = Modifier.size(18.dp)
         )
     }
 }

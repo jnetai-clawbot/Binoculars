@@ -95,7 +95,7 @@ class CameraManager(
     fun capturePhoto(onResult: (File?) -> Unit) {
         val imageCapture = this.imageCapture ?: run {
             DebugLogger.e("CameraManager", "ImageCapture not initialized", "CAM002")
-            onResult(null)
+            scope.launch { onResult(null) }
             return
         }
 
@@ -111,12 +111,12 @@ class CameraManager(
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     DebugLogger.i("CameraManager", "Photo saved to ${photoFile.absolutePath}")
-                    onResult(photoFile)
+                    scope.launch { onResult(photoFile) }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
                     DebugLogger.e("CameraManager", "Photo capture failed: ${exception.message}", "CAM003", exception)
-                    onResult(null)
+                    scope.launch { onResult(null) }
                 }
             }
         )
