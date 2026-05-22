@@ -12,8 +12,8 @@ android {
         applicationId = "com.jnetaol.binoculars"
         minSdk = 29
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 9
+        versionName = "1.0.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
