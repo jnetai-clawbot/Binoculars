@@ -33,17 +33,14 @@ class CameraManager(
     fun startCamera(previewView: PreviewView) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
-            try {
-                cameraProvider = cameraProviderFuture.get()
-                bindCamera(previewView)
-            } catch (e: Exception) {
-                DebugLogger.e("CameraManager", "Failed to get camera provider", "CAM000", e)
-            }
+            cameraProvider = cameraProviderFuture.get()
+            bindCamera(previewView)
         }, ContextCompat.getMainExecutor(context))
     }
 
     private fun bindCamera(previewView: PreviewView) {
-        val provider = cameraProvider ?: return
+        val cameraProvider = cameraProvider ?: return
+
         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
         preview = Preview.Builder().build().also {
@@ -56,8 +53,13 @@ class CameraManager(
             .build()
 
         try {
-            provider.unbindAll()
-            camera = provider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageCapture)
+            cameraProvider.unbindAll()
+            camera = cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                cameraSelector,
+                preview,
+                imageCapture
+            )
             DebugLogger.i("CameraManager", "Camera bound successfully")
         } catch (e: Exception) {
             DebugLogger.e("CameraManager", "Failed to bind camera", "CAM001", e)
@@ -67,27 +69,35 @@ class CameraManager(
     fun setZoomRatio(ratio: Float) {
         val cameraControl = camera?.cameraControl ?: return
         val clampedRatio = ratio.coerceIn(1f, getMaxZoomRatio())
-        try {
-            cameraControl.setZoomRatio(clampedRatio)
-        } catch (_: Exception) {}
+        cameraControl.setZoomRatio(clampedRatio)
         currentZoomRatio = clampedRatio
         onZoomChanged?.invoke(clampedRatio)
     }
 
-    fun zoomIn(step: Float = 0.5f) { setZoomRatio(currentZoomRatio + step) }
-    fun zoomOut(step: Float = 0.5f) { setZoomRatio(currentZoomRatio - step) }
+    fun zoomIn(step: Float = 0.5f) {
+        setZoomRatio(currentZoomRatio + step)
+    }
+
+    fun zoomOut(step: Float = 0.5f) {
+        setZoomRatio(currentZoomRatio - step)
+    }
+
     fun getCurrentZoomRatio(): Float = currentZoomRatio
-    fun getMaxZoomRatio(): Float = camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 8f
-    fun getMinZoomRatio(): Float = camera?.cameraInfo?.zoomState?.value?.minZoomRatio ?: 1f
+
+    fun getMaxZoomRatio(): Float {
+        return camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 8f
+    }
+
+    fun getMinZoomRatio(): Float {
+        return camera?.cameraInfo?.zoomState?.value?.minZoomRatio ?: 1f
+    }
 
     fun setFlashlight(enabled: Boolean) {
-        try {
-            camera?.cameraControl?.enableTorch(enabled)
-        } catch (_: Exception) {}
+        try { camera?.cameraControl?.enableTorch(enabled) } catch (_: Exception) {}
     }
 
     fun capturePhoto(onResult: (File?) -> Unit) {
-        val ic = imageCapture ?: run {
+        val imageCapture = this.imageCapture ?: run {
             DebugLogger.e("CameraManager", "ImageCapture not initialized", "CAM002")
             scope.launch { onResult(null) }
             return
@@ -95,28 +105,25 @@ class CameraManager(
 
         val outputDir = File(context.cacheDir, "photos")
         if (!outputDir.exists()) outputDir.mkdirs()
-        val photoFile = File(outputDir, "BINOC_${System.currentTimeMillis()}.jpg")
 
-        try {
-            val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-            ic.takePicture(
-                outputOptions,
-                cameraExecutor,
-                object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                        DebugLogger.i("CameraManager", "Photo saved: ${photoFile.name}")
-                        scope.launch { onResult(photoFile) }
-                    }
-                    override fun onError(exception: ImageCaptureException) {
-                        DebugLogger.e("CameraManager", "Capture error: ${exception.message}", "CAM003", exception)
-                        scope.launch { onResult(null) }
-                    }
+        val photoFile = File(outputDir, "BINOC_${System.currentTimeMillis()}.jpg")
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
+
+        imageCapture.takePicture(
+            outputOptions,
+            cameraExecutor,
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    DebugLogger.i("CameraManager", "Photo saved to ${photoFile.absolutePath}")
+                    scope.launch { onResult(photoFile) }
                 }
-            )
-        } catch (e: Exception) {
-            DebugLogger.e("CameraManager", "Capture exception: ${e.message}", "CAM004", e)
-            scope.launch { onResult(null) }
-        }
+
+                override fun onError(exception: ImageCaptureException) {
+                    DebugLogger.e("CameraManager", "Photo capture failed: ${exception.message}", "CAM003", exception)
+                    scope.launch { onResult(null) }
+                }
+            }
+        )
     }
 
     fun release() {

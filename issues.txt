@@ -1,0 +1,35 @@
+Binoculars App
+
+https://github.com/jnetai-clawbot/Binoculars
+
+
+/home/jay/Documents/Scripts/AI/OpenCode/More-Apps/Binoculars
+
+When I take a picture using the capture button the app crashes / closes, have it hide all overlays and take screenshot and then show the hidden overlays again instead of crashing when main capture method fails / crashes add option in settings to capture screen instead of capture like a camera toggle mode and auto enable this toggle so screenshot method is the default method, add gps permissions and add settings toggle for storing the location meta data to image (default is set to no location metadata saved) 
+
+More issues:
+1. When I take a picture using the capture button the app crashes / closes
+
+2. volume up and down fails to zoom in / out like i wanted (on screen zoom works fine so leave that and fix the volume zoom)
+
+3. add settings menu so overlays canm be switched off / on (like the distance calculator (guestimator) can be hidden / shown for example, and add other settings and options that are usful.
+
+4. add a distance (guestimator) and add to overlay so it looks cool like a spy gadget spy binoculars, add night vision mode option in Settings.
+
+5. make sure this dont crash / auto quit when an image is captured, instead show an error or something useful we can use to resolve the issue
+
+6 ask for req   uired permissions at install time not run time, if it has all required permissions display for a second app capture ready status then hide the status message if n ot got permissions then show request permission button, (hide button if already have permissions)
+
+add about button showing Made By jnetai.com
+add a check for new version (use github latest to compare) will need internet permissions)
+add share button (that uses latest github release)
+
+
+fix all issues above
+
+update github with new version using same key store so it can be updated!
+
+tell me when ready to test
+
+
+
