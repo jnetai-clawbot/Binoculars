@@ -84,7 +84,6 @@ fun CameraScreen(
         cameraManager.onZoomChanged = { zoom ->
             zoomRatio = zoom
         }
-        cameraManager.startCamera(/* previewView set in AndroidView */)
         onDispose { cameraManager.release() }
     }
 

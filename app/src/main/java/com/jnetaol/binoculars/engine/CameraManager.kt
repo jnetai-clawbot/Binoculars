@@ -49,7 +49,6 @@ class CameraManager(
 
         imageCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .setTargetRotation(previewView.display?.rotation ?: androidx.camera.core.ImageCapture.OutputFileOptions.INVALID_ROTATION)
             .setJpegQuality(100)
             .build()
 
