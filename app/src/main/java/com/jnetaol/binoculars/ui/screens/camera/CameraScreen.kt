@@ -1,7 +1,13 @@
 package com.jnetaol.binoculars.ui.screens.camera
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.location.Location
+import android.media.ExifInterface
+import android.os.Looper
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,17 +32,33 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.jnetaol.binoculars.engine.CameraManager
 import com.jnetaol.binoculars.engine.DistanceEstimator
 import com.jnetaol.binoculars.engine.SettingsManager
 import com.jnetaol.binoculars.logger.DebugLogger
 import com.jnetaol.binoculars.ui.theme.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Locale
+
+private fun convertToDMS(value: Double): String {
+    val abs = Math.abs(value)
+    val degrees = abs.toInt()
+    val minutes = ((abs - degrees) * 60).toInt()
+    val seconds = ((abs - degrees - minutes / 60.0) * 3600 * 100).toInt()
+    return "$degrees/1,$minutes/1,$seconds/100"
+}
 
 @Composable
 fun CameraScreen(
@@ -46,12 +68,13 @@ fun CameraScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
 
-    val hasPermission = ContextCompat.checkSelfPermission(
+    val hasCameraPermission = ContextCompat.checkSelfPermission(
         context, Manifest.permission.CAMERA
     ) == PackageManager.PERMISSION_GRANTED
 
-    val permissionLauncher = rememberLauncherForActivityResult(
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (!granted) {
@@ -61,12 +84,12 @@ fun CameraScreen(
     }
 
     LaunchedEffect(Unit) {
-        if (!hasPermission) {
-            permissionLauncher.launch(Manifest.permission.CAMERA)
+        if (!hasCameraPermission) {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
-    if (!hasPermission) {
+    if (!hasCameraPermission) {
         Box(
             modifier = Modifier.fillMaxSize().background(DarkBackground),
             contentAlignment = Alignment.Center
@@ -81,11 +104,17 @@ fun CameraScreen(
     val showDistance by SettingsManager.showDistanceOverlay(context).collectAsState(initial = true)
     val nightVision by SettingsManager.nightVisionMode(context).collectAsState(initial = false)
     val showGrid by SettingsManager.showGrid(context).collectAsState(initial = true)
+    val useScreenshotCapture by SettingsManager.useScreenshotCapture(context).collectAsState(initial = true)
+    val saveLocationMetadata by SettingsManager.saveLocationMetadata(context).collectAsState(initial = false)
 
     var zoomRatio by remember { mutableFloatStateOf(1f) }
     var maxZoomRatio by remember { mutableFloatStateOf(8f) }
     var isCapturing by remember { mutableStateOf(false) }
     var captureError by remember { mutableStateOf<String?>(null) }
+    var overlayVisible by remember { mutableStateOf(true) }
+
+    var previewRef by remember { mutableStateOf<PreviewView?>(null) }
+    var locationClient: FusedLocationProviderClient? = null
 
     DisposableEffect(Unit) {
         cameraManager.onZoomChanged = { zoom ->
@@ -109,15 +138,61 @@ fun CameraScreen(
         }
     }
 
+    fun doCapture() {
+        if (isCapturing) return
+        isCapturing = true
+
+        val fClient = try {
+            LocationServices.getFusedLocationProviderClient(context)
+        } catch (_: Exception) { null }
+
+        if (useScreenshotCapture) {
+            captureScreenshot(context, previewRef, zoomRatio, saveLocationMetadata, fClient) { file ->
+                isCapturing = false
+                overlayVisible = true
+                if (file != null) {
+                    onPhotoCaptured(file, zoomRatio)
+                } else {
+                    captureError = "Screenshot capture failed. Please try again."
+                }
+            }
+        } else {
+            cameraManager.capturePhoto { file ->
+                if (file != null) {
+                    if (saveLocationMetadata) {
+                        embedLocation(context, file, fClient) { updatedFile ->
+                            isCapturing = false
+                            onPhotoCaptured(updatedFile, zoomRatio)
+                        }
+                    } else {
+                        isCapturing = false
+                        onPhotoCaptured(file, zoomRatio)
+                    }
+                } else {
+                    isCapturing = false
+                    captureScreenshot(context, previewRef, zoomRatio, saveLocationMetadata, fClient) { fallbackFile ->
+                        overlayVisible = true
+                        if (fallbackFile != null) {
+                            onPhotoCaptured(fallbackFile, zoomRatio)
+                        } else {
+                            captureError = "Photo capture failed. Please try again."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(DarkBackground)
+            .background(if (overlayVisible) DarkBackground else Color.Black)
     ) {
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).apply {
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    previewRef = this
                     post {
                         cameraManager.startCamera(this)
                     }
@@ -126,43 +201,45 @@ fun CameraScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        if (nightVision) {
-            Box(
+        if (overlayVisible) {
+            if (nightVision) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0x6600FF00))
+                )
+            }
+
+            if (showDistance) {
+                DistanceOverlay(zoomRatio = zoomRatio)
+            }
+
+            if (showGrid) {
+                ReticleOverlay(modifier = Modifier.fillMaxSize())
+            }
+        }
+
+        if (overlayVisible) {
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0x6600FF00))
-            )
-        }
-
-        if (showDistance) {
-            DistanceOverlay(zoomRatio = zoomRatio)
-        }
-
-        if (showGrid) {
-            ReticleOverlay(modifier = Modifier.fillMaxSize())
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(16.dp)
             ) {
-                IconButton(onClick = onClose) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Close",
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onClose) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Close",
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    IconButton(onClick = { /* flash not supported */ }) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
@@ -171,72 +248,153 @@ fun CameraScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.FlashOff,
-                                contentDescription = "Flash off",
-                                tint = TextSecondary,
+                                imageVector = if (useScreenshotCapture) Icons.Default.Screenshot else Icons.Default.Camera,
+                                contentDescription = "Capture mode",
+                                tint = if (useScreenshotCapture) AccentYellow else TextSecondary,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.weight(1f))
 
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Volume keys to zoom",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextTertiary.copy(alpha = 0.6f),
-                    fontSize = 11.sp
-                )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Volume keys to zoom",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextTertiary.copy(alpha = 0.6f),
+                        fontSize = 11.sp
+                    )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                ZoomSlider(
-                    currentZoom = zoomRatio,
-                    maxZoom = maxZoomRatio,
-                    onZoomChange = { cameraManager.setZoomRatio(it) }
-                )
+                    ZoomSlider(
+                        currentZoom = zoomRatio,
+                        maxZoom = maxZoomRatio,
+                        onZoomChange = { cameraManager.setZoomRatio(it) }
+                    )
 
-                Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
-                ShutterButton(
-                    isCapturing = isCapturing,
-                    onClick = {
-                        if (!isCapturing) {
-                            isCapturing = true
-                            cameraManager.capturePhoto { file ->
-                                isCapturing = false
-                                if (file != null) {
-                                    onPhotoCaptured(file, zoomRatio)
-                                } else {
-                                    captureError = "Photo capture failed. Please try again."
-                                    DebugLogger.e(
-                                        "CameraScreen",
-                                        "Photo capture failed",
-                                        "CAM004"
-                                    )
-                                }
+                    ShutterButton(
+                        isCapturing = isCapturing,
+                        onClick = {
+                            scope.launch {
+                                overlayVisible = false
+                                delay(100)
+                                doCapture()
                             }
                         }
-                    }
-                )
+                    )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                Text(
-                    text = "%.1fx".format(zoomRatio),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = NeonGreen,
-                    fontSize = 16.sp
-                )
+                    Text(
+                        text = "%.1fx".format(zoomRatio),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = NeonGreen,
+                        fontSize = 16.sp
+                    )
+                }
             }
         }
+    }
+}
+
+private fun captureScreenshot(
+    context: Context,
+    previewView: PreviewView?,
+    zoomRatio: Float,
+    saveLocation: Boolean,
+    locationClient: FusedLocationProviderClient?,
+    onResult: (File?) -> Unit
+) {
+    val view = previewView ?: run {
+        onResult(null)
+        return
+    }
+
+    Looper.myLooper() ?: run {
+        android.os.Handler(Looper.getMainLooper()).post {
+            captureScreenshot(context, previewView, zoomRatio, saveLocation, locationClient, onResult)
+        }
+        return
+    }
+
+    try {
+        val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        view.draw(canvas)
+
+        val outputDir = File(context.cacheDir, "photos")
+        if (!outputDir.exists()) outputDir.mkdirs()
+        val photoFile = File(outputDir, "BINOC_${System.currentTimeMillis()}.jpg")
+
+        FileOutputStream(photoFile).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+        }
+        bitmap.recycle()
+
+        DebugLogger.i("CameraScreen", "Screenshot saved to ${photoFile.absolutePath}")
+
+        if (saveLocation && locationClient != null) {
+            embedLocation(context, photoFile, locationClient) { updatedFile ->
+                onResult(updatedFile)
+            }
+        } else {
+            onResult(photoFile)
+        }
+    } catch (e: Exception) {
+        DebugLogger.e("CameraScreen", "Screenshot failed: ${e.message}", "CAM005", e)
+        onResult(null)
+    }
+}
+
+private fun embedLocation(
+    context: Context,
+    photoFile: File,
+    locationClient: FusedLocationProviderClient?,
+    onResult: (File) -> Unit
+) {
+    val client = locationClient ?: run { onResult(photoFile); return }
+
+    try {
+        client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+            .addOnSuccessListener { location: Location? ->
+                if (location != null) {
+                    try {
+                        val exif = ExifInterface(photoFile.absolutePath)
+                        val lat = location.latitude
+                        val lon = location.longitude
+                        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, convertToDMS(lat))
+                        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, if (lat >= 0) "N" else "S")
+                        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, convertToDMS(lon))
+                        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, if (lon >= 0) "E" else "W")
+                        if (location.hasAltitude()) {
+                            exif.setAttribute(ExifInterface.TAG_GPS_ALTITUDE,
+                                (location.altitude * 100).toLong().toString())
+                            exif.setAttribute(ExifInterface.TAG_GPS_ALTITUDE_REF, if (location.altitude >= 0) "0" else "1")
+                        }
+                        exif.saveAttributes()
+                        DebugLogger.i("CameraScreen", "Location metadata embedded: ${location.latitude}, ${location.longitude}")
+                    } catch (e: Exception) {
+                        DebugLogger.e("CameraScreen", "Failed to write EXIF", "CAM006", e)
+                    }
+                }
+                onResult(photoFile)
+            }
+            .addOnFailureListener {
+                DebugLogger.w("CameraScreen", "Location fetch failed: ${it.message}")
+                onResult(photoFile)
+            }
+    } catch (e: Exception) {
+        DebugLogger.w("CameraScreen", "Location unavailable: ${e.message}")
+        onResult(photoFile)
     }
 }
 

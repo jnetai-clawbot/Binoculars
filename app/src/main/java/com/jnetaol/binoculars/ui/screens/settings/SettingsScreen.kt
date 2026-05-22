@@ -30,6 +30,8 @@ fun SettingsScreen(
     val showDistance by SettingsManager.showDistanceOverlay(context).collectAsState(initial = true)
     val nightVision by SettingsManager.nightVisionMode(context).collectAsState(initial = false)
     val showGrid by SettingsManager.showGrid(context).collectAsState(initial = true)
+    val useScreenshotCapture by SettingsManager.useScreenshotCapture(context).collectAsState(initial = true)
+    val saveLocationMetadata by SettingsManager.saveLocationMetadata(context).collectAsState(initial = false)
 
     Column(
         modifier = Modifier
@@ -93,6 +95,34 @@ fun SettingsScreen(
                         scope.launch { SettingsManager.setShowGrid(context, it) }
                     },
                     accentColor = NeonTeal
+                )
+            }
+
+            SectionHeader(title = "Capture", accentColor = AccentYellow)
+
+            NeonCard(borderColor = AccentYellow.copy(alpha = 0.2f)) {
+                SettingToggle(
+                    icon = Icons.Default.Screenshot,
+                    title = "Screenshot Capture Mode",
+                    subtitle = "Use screen capture instead of camera API (more reliable, default ON)",
+                    checked = useScreenshotCapture,
+                    onCheckedChange = {
+                        scope.launch { SettingsManager.setUseScreenshotCapture(context, it) }
+                    },
+                    accentColor = AccentYellow
+                )
+
+                Divider(color = TextTertiary.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 8.dp))
+
+                SettingToggle(
+                    icon = Icons.Default.LocationOn,
+                    title = "Save Location Metadata",
+                    subtitle = "Embed GPS coordinates in captured photos",
+                    checked = saveLocationMetadata,
+                    onCheckedChange = {
+                        scope.launch { SettingsManager.setSaveLocationMetadata(context, it) }
+                    },
+                    accentColor = AccentBlue
                 )
             }
 

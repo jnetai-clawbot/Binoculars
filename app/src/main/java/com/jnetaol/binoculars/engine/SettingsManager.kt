@@ -17,6 +17,8 @@ object SettingsManager {
     private val KEY_NIGHT_VISION = booleanPreferencesKey("night_vision_mode")
     private val KEY_SHOW_GRID = booleanPreferencesKey("show_grid")
     private val KEY_DISTANCE_MULTIPLIER = floatPreferencesKey("distance_multiplier")
+    private val KEY_USE_SCREENSHOT_CAPTURE = booleanPreferencesKey("use_screenshot_capture")
+    private val KEY_SAVE_LOCATION_METADATA = booleanPreferencesKey("save_location_metadata")
 
     fun showDistanceOverlay(context: Context): Flow<Boolean> =
         context.dataStore.data.map { it[KEY_SHOW_DISTANCE] ?: true }
@@ -29,6 +31,12 @@ object SettingsManager {
 
     fun distanceMultiplier(context: Context): Flow<Float> =
         context.dataStore.data.map { it[KEY_DISTANCE_MULTIPLIER] ?: 1.0f }
+
+    fun useScreenshotCapture(context: Context): Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_USE_SCREENSHOT_CAPTURE] ?: true }
+
+    fun saveLocationMetadata(context: Context): Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_SAVE_LOCATION_METADATA] ?: false }
 
     suspend fun setShowDistanceOverlay(context: Context, value: Boolean) {
         context.dataStore.edit { it[KEY_SHOW_DISTANCE] = value }
@@ -44,5 +52,13 @@ object SettingsManager {
 
     suspend fun setDistanceMultiplier(context: Context, value: Float) {
         context.dataStore.edit { it[KEY_DISTANCE_MULTIPLIER] = value }
+    }
+
+    suspend fun setUseScreenshotCapture(context: Context, value: Boolean) {
+        context.dataStore.edit { it[KEY_USE_SCREENSHOT_CAPTURE] = value }
+    }
+
+    suspend fun setSaveLocationMetadata(context: Context, value: Boolean) {
+        context.dataStore.edit { it[KEY_SAVE_LOCATION_METADATA] = value }
     }
 }
