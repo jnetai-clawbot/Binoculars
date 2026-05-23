@@ -5,14 +5,17 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.media.ExifInterface
 import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -25,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,6 +64,7 @@ fun GalleryScreen(viewModel: AppViewModel, onBack: () -> Unit) {
     var showClearAllConfirm by remember { mutableStateOf(false) }
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var metadataPhoto by remember { mutableStateOf<CapturedPhoto?>(null) }
 
     Box(Modifier.fillMaxSize().background(DarkBackground)) {
         if (selectedPhoto != null) {
@@ -91,8 +96,7 @@ fun GalleryScreen(viewModel: AppViewModel, onBack: () -> Unit) {
                 Surface(color = NeonGreen.copy(alpha = 0.1f)) {
                     Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                         TextButton(onClick = {
-                            val selected = photos.filter { it.id in selectedIds }
-                            viewModel.moveToDcim(selected)
+                            viewModel.moveToDcim(photos.filter { it.id in selectedIds })
                             selectionMode = false; selectedIds = emptySet()
                         }) { Icon(Icons.Default.Folder, null, tint = NeonGreen, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Move to DCIM", color = NeonGreen, fontSize = 13.sp) }
                         TextButton(onClick = { selectedIds = photos.map { it.id }.toSet() }) { Icon(Icons.Default.SelectAll, null, tint = NeonTeal, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("Select All", color = NeonTeal, fontSize = 13.sp) }
@@ -103,22 +107,71 @@ fun GalleryScreen(viewModel: AppViewModel, onBack: () -> Unit) {
             if (photos.isEmpty()) EmptyState(icon = Icons.Default.PhotoLibrary, title = "Gallery is empty", subtitle = "Photos you capture will appear here")
             else LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(photos, key = { it.id }) { photo ->
-                    GalleryThumbnail(photo, photo.id in selectedIds, selectionMode, onClick = {
-                        if (selectionMode) selectedIds = if (photo.id in selectedIds) selectedIds - photo.id else selectedIds + photo.id
-                        else selectedPhoto = photo
-                    })
+                    GalleryThumbnail(photo, photo.id in selectedIds, selectionMode,
+                        onClick = {
+                            if (selectionMode) selectedIds = if (photo.id in selectedIds) selectedIds - photo.id else selectedIds + photo.id
+                            else selectedPhoto = photo
+                        },
+                        onLongClick = { metadataPhoto = photo }
+                    )
                 }
             }
         }
     }
+
+    if (metadataPhoto != null) {
+        val file = File(metadataPhoto!!.filePath)
+        val gps = readGpsInfo(file)
+        val df = SimpleDateFormat("MMM dd, yyyy HH:mm:ss", Locale.getDefault())
+        val gpsText: String? = if (gps.lat != null && gps.lon != null) {
+            "%.6f, %.6f".format(gps.lat, gps.lon) + if (gps.alt != null) " (%.1fm alt)".format(gps.alt) else ""
+        } else null
+
+        AlertDialog(
+            onDismissRequest = { metadataPhoto = null },
+            containerColor = DarkSurfaceVariant,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary,
+            title = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Info, null, tint = NeonGreen, modifier = Modifier.size(22.dp)); Spacer(Modifier.width(8.dp)); Text("Photo Metadata", fontWeight = FontWeight.SemiBold, fontSize = 18.sp) } },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MetaRow("Filename", metadataPhoto!!.filePath.substringAfterLast("/"))
+                    MetaRow("Date", df.format(Date(metadataPhoto!!.timestamp)))
+                    MetaRow("Size", formatFileSize(file.length()))
+                    MetaRow("Zoom", "%.1fx".format(metadataPhoto!!.zoomLevel))
+                    if (gpsText != null) {
+                        Spacer(Modifier.height(4.dp))
+                        Surface(color = AccentBlue.copy(alpha = 0.1f), shape = RoundedCornerShape(8.dp)) {
+                            Column(Modifier.padding(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.LocationOn, null, tint = AccentBlue, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("GPS Location", color = AccentBlue, fontWeight = FontWeight.SemiBold, fontSize = 13.sp) }
+                                Spacer(Modifier.height(4.dp))
+                                Text(gpsText, color = TextPrimary, fontSize = 13.sp, lineHeight = 20.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                if (gpsText != null) TextButton(onClick = {
+                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cb.setPrimaryClip(ClipData.newPlainText("GPS", gpsText))
+                    Toast.makeText(context, "GPS copied", Toast.LENGTH_SHORT).show()
+                }) { Icon(Icons.Default.ContentCopy, null, tint = NeonGreen, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Copy GPS", color = NeonGreen, fontSize = 13.sp) }
+                TextButton(onClick = { metadataPhoto = null }) { Text("Close", color = TextPrimary) }
+            }
+        )
+    }
+
     if (showClearAllConfirm) ConfirmDialog(
         title = "Delete All Photos", message = "This will permanently delete all ${photos.size} photos.", confirmText = "Delete All",
         onConfirm = { viewModel.deleteAllPhotos(); showClearAllConfirm = false }, onDismiss = { showClearAllConfirm = false })
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GalleryThumbnail(photo: CapturedPhoto, selected: Boolean, selectionMode: Boolean, onClick: () -> Unit) {
-    Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(DarkSurfaceVariant).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+private fun GalleryThumbnail(photo: CapturedPhoto, selected: Boolean, selectionMode: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
+    Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(DarkSurfaceVariant)
+        .combinedClickable(onClick = onClick, onLongClick = onLongClick), contentAlignment = Alignment.Center) {
         val f = File(photo.filePath)
         if (f.exists()) AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(f).crossfade(true).build(), contentDescription = "Photo ${photo.id}", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         else Icon(Icons.Default.BrokenImage, "Missing", tint = TextTertiary, modifier = Modifier.size(32.dp))
@@ -126,6 +179,14 @@ private fun GalleryThumbnail(photo: CapturedPhoto, selected: Boolean, selectionM
         if (selectionMode && selected) Box(Modifier.fillMaxSize().background(NeonGreen.copy(alpha = 0.2f)), contentAlignment = Alignment.TopEnd) {
             Box(Modifier.padding(6.dp).size(22.dp).clip(CircleShape).background(NeonGreen), contentAlignment = Alignment.Center) { Icon(Icons.Default.Check, null, tint = TextOnAccent, modifier = Modifier.size(14.dp)) }
         }
+    }
+}
+
+@Composable
+private fun MetaRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = TextTertiary, fontSize = 12.sp)
+        Text(value, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.End, modifier = Modifier.weight(1f, fill = false))
     }
 }
 
@@ -156,11 +217,7 @@ private fun PhotoDetailScreen(photo: CapturedPhoto, onClose: () -> Unit, onDelet
                 Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.LocationOn, null, tint = AccentBlue, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(4.dp))
                     Text(txt, color = TextPrimary, fontSize = 11.sp, maxLines = 1); Spacer(Modifier.width(6.dp))
-                    IconButton(onClick = {
-                        val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cb.setPrimaryClip(ClipData.newPlainText("GPS", txt))
-                        Toast.makeText(context, "GPS coordinates copied", Toast.LENGTH_SHORT).show()
-                    }, modifier = Modifier.size(22.dp)) { Icon(Icons.Default.ContentCopy, "Copy GPS", tint = NeonGreen.copy(alpha = 0.7f), modifier = Modifier.size(12.dp)) }
+                    IconButton(onClick = { val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager; cb.setPrimaryClip(ClipData.newPlainText("GPS", txt)); Toast.makeText(context, "GPS coordinates copied", Toast.LENGTH_SHORT).show() }, modifier = Modifier.size(22.dp)) { Icon(Icons.Default.ContentCopy, "Copy GPS", tint = NeonGreen.copy(alpha = 0.7f), modifier = Modifier.size(12.dp)) }
                 }
             }
         }
