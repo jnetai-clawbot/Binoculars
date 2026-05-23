@@ -70,10 +70,12 @@ fun CameraScreen(
 
     val hasCamPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
-    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val camPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) { Toast.makeText(context, "Camera permission is required", Toast.LENGTH_SHORT).show(); onClose() }
     }
-    LaunchedEffect(Unit) { if (!hasCamPerm) permLauncher.launch(Manifest.permission.CAMERA) }
+    val locPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+    LaunchedEffect(Unit) { if (!hasCamPerm) camPermLauncher.launch(Manifest.permission.CAMERA) }
 
     if (!hasCamPerm) {
         Box(Modifier.fillMaxSize().background(DarkBackground), contentAlignment = Alignment.Center) {
@@ -97,6 +99,7 @@ fun CameraScreen(
     var captureError by remember { mutableStateOf<String?>(null) }
     var overlayVisible by remember { mutableStateOf(true) }
     var previewRef by remember { mutableStateOf<PreviewView?>(null) }
+    var locationRequested by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         cameraManager.onZoomChanged = { zoom -> zoomRatio = zoom }
@@ -105,6 +108,16 @@ fun CameraScreen(
     }
 
     LaunchedEffect(Unit) { maxZoomRatio = cameraManager.getMaxZoomRatio() }
+
+    LaunchedEffect(saveLocationMetadata) {
+        if (saveLocationMetadata) {
+            val hasLocNow = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (!hasLocNow && !locationRequested) {
+                locationRequested = true
+                locPermLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        }
+    }
 
     LaunchedEffect(captureError) {
         captureError?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show(); captureError = null }
