@@ -34,7 +34,7 @@ object SettingsManager {
         context.dataStore.data.map { it[KEY_DISTANCE_MULTIPLIER] ?: 1.0f }
 
     fun useScreenshotCapture(context: Context): Flow<Boolean> =
-        context.dataStore.data.map { it[KEY_USE_SCREENSHOT_CAPTURE] ?: true }
+        context.dataStore.data.map { it[KEY_USE_SCREENSHOT_CAPTURE] ?: false }
 
     fun saveLocationMetadata(context: Context): Flow<Boolean> =
         context.dataStore.data.map { it[KEY_SAVE_LOCATION_METADATA] ?: false }

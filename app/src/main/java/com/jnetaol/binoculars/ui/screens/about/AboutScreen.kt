@@ -27,12 +27,16 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 @Composable
-fun AboutScreen(
-    onBack: () -> Unit
-) {
+fun AboutScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val currentVersion = "1.0.1"
+
+    val currentVersion = remember {
+        try {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            info.versionName ?: "1.0.0"
+        } catch (_: Exception) { "1.0.0" }
+    }
 
     var updateStatus by remember { mutableStateOf("Checking...") }
     var showUpdate by remember { mutableStateOf(false) }
@@ -47,177 +51,65 @@ fun AboutScreen(
                     val conn = url.openConnection() as HttpURLConnection
                     conn.requestMethod = "GET"
                     conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
-                    conn.connectTimeout = 5000
-                    conn.readTimeout = 5000
-
+                    conn.connectTimeout = 5000; conn.readTimeout = 5000
                     if (conn.responseCode == 200) {
-                        val body = conn.inputStream.bufferedReader().readText()
-                        val json = JSONObject(body)
-                        val tagName = json.getString("tag_name").removePrefix("v")
-                        val htmlUrl = json.getString("html_url")
-                        Pair(tagName, htmlUrl)
+                        val json = JSONObject(conn.inputStream.bufferedReader().readText())
+                        Pair(json.getString("tag_name").removePrefix("v"), json.getString("html_url"))
                     } else null
                 }
-
                 if (result != null) {
-                    latestVersion = result.first
-                    releaseUrl = result.second
-                    if (result.first != currentVersion) {
-                        updateStatus = "Update available: v${result.first}"
-                        showUpdate = true
-                    } else {
-                        updateStatus = "You're up to date"
-                    }
-                } else {
-                    updateStatus = "Could not check for updates"
-                }
-            } catch (_: Exception) {
-                updateStatus = "Could not check for updates"
-            }
+                    latestVersion = result.first; releaseUrl = result.second
+                    if (result.first != currentVersion) { updateStatus = "Update available: v${result.first}"; showUpdate = true }
+                    else updateStatus = "You're up to date"
+                } else updateStatus = "Could not check for updates"
+            } catch (_: Exception) { updateStatus = "Could not check for updates" }
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBackground)
-    ) {
+    Column(Modifier.fillMaxSize().background(DarkBackground)) {
         Surface(color = DarkSurface, shadowElevation = 4.dp) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 8.dp)
-                    .statusBarsPadding(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = TextPrimary
-                    )
-                }
-                Text(
-                    text = "About",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary,
-                    modifier = Modifier.weight(1f)
-                )
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp).statusBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary) }
+                Text("About", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = TextPrimary, modifier = Modifier.weight(1f))
             }
         }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .background(NeonGreen.copy(alpha = 0.1f), RoundedCornerShape(20.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.RemoveRedEye,
-                    contentDescription = null,
-                    tint = NeonGreen,
-                    modifier = Modifier.size(48.dp)
-                )
+        Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Box(Modifier.size(80.dp).background(NeonGreen.copy(alpha = 0.1f), RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.RemoveRedEye, null, tint = NeonGreen, modifier = Modifier.size(48.dp))
             }
+            Spacer(Modifier.height(16.dp))
+            Text("Binoculars", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = NeonGreen)
+            Text("v$currentVersion", style = MaterialTheme.typography.titleMedium, color = TextSecondary)
+            Spacer(Modifier.height(8.dp))
+            Text("Made by jnetai.com", style = MaterialTheme.typography.bodyMedium, color = TextTertiary, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(24.dp))
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Binoculars",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = NeonGreen
-            )
-
-            Text(
-                text = "v$currentVersion",
-                style = MaterialTheme.typography.titleMedium,
-                color = TextSecondary
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Made by jnetai.com",
-                style = MaterialTheme.typography.bodyMedium,
-                color = TextTertiary,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            NeonCard(modifier = Modifier.fillMaxWidth(), borderColor = NeonGreen.copy(alpha = 0.2f)) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
+            NeonCard(Modifier.fillMaxWidth(), borderColor = NeonGreen.copy(alpha = 0.2f)) {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = updateStatus,
-                            color = if (showUpdate) AccentYellow else NeonGreen,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Text(updateStatus, color = if (showUpdate) AccentYellow else NeonGreen, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     }
-
                     if (showUpdate) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/jnetai-clawbot/Binoculars/releases/latest"))
-                                    context.startActivity(intent)
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = TextOnAccent)
-                            ) {
-                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Update", fontSize = 13.sp)
+                        Spacer(Modifier.height(12.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/jnetai-clawbot/Binoculars/releases/latest"))) }, modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = TextOnAccent)) {
+                                Icon(Icons.Default.Download, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Update", fontSize = 13.sp)
                             }
-
-                            Button(
-                                onClick = {
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_SUBJECT, "Binoculars - Digital Zoom Camera")
-                                        putExtra(Intent.EXTRA_TEXT, "Check out Binoculars: https://github.com/jnetai-clawbot/Binoculars/releases/latest")
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Share Binoculars"))
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = NeonTeal, contentColor = TextOnAccent)
-                            ) {
-                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Share", fontSize = 13.sp)
+                            Button(onClick = {
+                                val si = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_SUBJECT, "Binoculars - Digital Zoom Camera"); putExtra(Intent.EXTRA_TEXT, "Check out Binoculars: https://github.com/jnetai-clawbot/Binoculars/releases/latest") }
+                                context.startActivity(Intent.createChooser(si, "Share Binoculars"))
+                            }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = NeonTeal, contentColor = TextOnAccent)) {
+                                Icon(Icons.Default.Share, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Share", fontSize = 13.sp)
                             }
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Digital zoom camera with distance estimation,\nnight vision mode, and photo gallery.",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextTertiary,
-                textAlign = TextAlign.Center
-            )
+            Spacer(Modifier.height(16.dp))
+            Text("Digital zoom camera with distance estimation,\nnight vision mode, and photo gallery.", style = MaterialTheme.typography.bodySmall, color = TextTertiary, textAlign = TextAlign.Center)
         }
     }
 }

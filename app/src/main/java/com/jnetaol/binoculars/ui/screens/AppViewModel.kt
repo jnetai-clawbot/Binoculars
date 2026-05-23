@@ -1,6 +1,10 @@
 package com.jnetaol.binoculars.ui.screens
 
 import android.app.Application
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -8,10 +12,11 @@ import androidx.lifecycle.viewModelScope
 import com.jnetaol.binoculars.BinocularsApp
 import com.jnetaol.binoculars.data.db.AppDatabase
 import com.jnetaol.binoculars.data.model.CapturedPhoto
-import com.jnetaol.binoculars.engine.CameraManager
 import com.jnetaol.binoculars.logger.DebugLogger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -89,8 +94,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setCapturing(capturing: Boolean) {
-        _isCapturing.value = capturing
+    fun setCapturing(capturing: Boolean) { _isCapturing.value = capturing }
+
+    fun moveToDcim(photos: List<CapturedPhoto>) {
+        viewModelScope.launch {
+            var moved = 0
+            try {
+                withContext(Dispatchers.IO) {
+                    photos.forEach { photo ->
+                        val src = File(photo.filePath)
+                        if (!src.exists()) return@forEach
+                        val app = getApplication<Application>()
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                val values = ContentValues().apply {
+                                    put(MediaStore.Images.Media.DISPLAY_NAME, "Binoculars_${System.currentTimeMillis()}_${photo.id}.jpg")
+                                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/Binoculars")
+                                }
+                                val uri = app.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                                uri?.let { app.contentResolver.openOutputStream(it)?.use { out -> FileInputStream(src).use { it.copyTo(out) } } }
+                                if (uri != null) moved++
+                            } else {
+                                val dcim = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Binoculars")
+                                if (!dcim.exists()) dcim.mkdirs()
+                                FileInputStream(src).use { input -> FileOutputStream(File(dcim, src.name)).use { output -> input.copyTo(output) } }
+                                moved++
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+                _toastMessage.emit("Moved $moved photo(s) to DCIM/Binoculars")
+            } catch (e: Exception) {
+                DebugLogger.e("AppViewModel", "DCIM move failed", "VM004", e)
+                _toastMessage.emit("Failed to move photos to DCIM")
+            }
+        }
     }
 
     class Factory(private val application: Application) : ViewModelProvider.Factory {
